@@ -103,23 +103,29 @@ async def handle_text(message: types.Message):
 
 async def process_image_bytes(message: types.Message, status_msg: types.Message, image_bytes: bytes):
     try:
-        await status_msg.edit_text(" Поиск публикаций изображения через Yandex Search API...")
+        await status_msg.edit_text(" Поиск точных совпадений через Yandex Search API...")
         found_urls, error_msg = await yandex_client.search_by_image_bytes(image_bytes)
-        await evaluate_results_and_reply(status_msg, found_urls, error_msg)
+        await evaluate_results_and_reply(status_msg, found_urls, error_msg, image_bytes=image_bytes)
     except Exception as e:
         logger.error(f" Ошибка в процессе проверки: {e}", exc_info=True)
         await status_msg.edit_text(f" Произошла ошибка при выполнении проверки: {e}")
 
 async def process_image_url(message: types.Message, status_msg: types.Message, image_url: str):
     try:
-        await status_msg.edit_text(" Поиск публикаций изображения через Yandex Search API...")
+        await status_msg.edit_text(" Поиск точных совпадений через Yandex Search API...")
         found_urls, error_msg = await yandex_client.search_by_image_url(image_url)
-        await evaluate_results_and_reply(status_msg, found_urls, error_msg)
+        await evaluate_results_and_reply(status_msg, found_urls, error_msg, image_url=image_url)
     except Exception as e:
         logger.error(f" Ошибка в процессе проверки: {e}", exc_info=True)
         await status_msg.edit_text(f" Произошла ошибка при выполнении проверки: {e}")
 
-async def evaluate_results_and_reply(status_msg: types.Message, found_urls: list[str], error_msg: str):
+async def evaluate_results_and_reply(
+    status_msg: types.Message,
+    found_urls: list[str],
+    error_msg: str,
+    image_bytes: bytes = None,
+    image_url: str = None
+):
     if error_msg:
         await status_msg.edit_text(f"<b> Ошибка API:</b>\n{error_msg}")
         return
@@ -128,17 +134,21 @@ async def evaluate_results_and_reply(status_msg: types.Message, found_urls: list
         warning_text = (
             "<b> ПРЕДУПРЕЖДЕНИЕ!</b>\n\n"
             "Данное изображение <b>ранее нигде не было опубликовано</b> в Интернете "
-            "(Яндекс не нашел ни одной копии этой картинки)."
+            "(Яндекс не нашел ни одной точной копии этой картинки)."
         )
         await status_msg.edit_text(warning_text)
         return
 
-    await status_msg.edit_text(f" Найдено источников: {len(found_urls)}. Проверяю на наличие фотобанков...")
-    photobanks_found = await verifier.verify_urls(found_urls)
+    await status_msg.edit_text(f" Найдено источников: {len(found_urls)}. Проверяю на ТОЧНЫЕ совпадения с фотобанками...")
+    photobanks_found = await verifier.verify_urls(
+        found_urls,
+        original_image_bytes=image_bytes,
+        original_image_url=image_url
+    )
 
     if photobanks_found:
         result_text = "<b>НАЙДЕНО! Запрещено!</b>\n\n"
-        result_text += "<b>Найдены следующие фотобанки:</b>\n"
+        result_text += "<b>Обнаружены точные совпадения в фотобанках:</b>\n"
         
         for idx, (url, name) in enumerate(photobanks_found.items(), 1):
             result_text += f"{idx}. <b>{name}</b>:\n{url}\n\n"
@@ -147,7 +157,7 @@ async def evaluate_results_and_reply(status_msg: types.Message, found_urls: list
     else:
         clean_text = (
             "<b> Фотобанки не обнаружены.</b>\n\n"
-            f"Проверено {len(found_urls)} источников, совпадений с заблокированными фотобанками и стоками не найдено."
+            f"Проверено {len(found_urls)} источников. Точных совпадений с заблокированными коммерческими фотобанками и стоками не найдено."
         )
         await status_msg.edit_text(clean_text)
 
