@@ -148,10 +148,15 @@ async def evaluate_results_and_reply(
 
     if photobanks_found:
         result_text = "<b>НАЙДЕНО! Запрещено!</b>\n\n"
-        result_text += "<b>Обнаружены точные совпадения в фотобанках:</b>\n"
+        result_text += f"<b>Обнаружены совпадения в фотобанках ({len(photobanks_found)}):</b>\n\n"
         
-        for idx, (url, name) in enumerate(photobanks_found.items(), 1):
-            result_text += f"{idx}. <b>{name}</b>:\n{url}\n\n"
+        items_list = list(photobanks_found.items())
+        for idx, (url, name) in enumerate(items_list, 1):
+            line = f"{idx}. <b>{name}</b>:\n{url}\n\n"
+            if len(result_text) + len(line) > 3900:
+                result_text += f"<i>...и еще {len(items_list) - idx + 1} ссылок на фотобанки</i>"
+                break
+            result_text += line
 
         await status_msg.edit_text(result_text, disable_web_page_preview=True)
     else:
