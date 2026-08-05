@@ -56,12 +56,8 @@ async def cmd_help(message: types.Message):
 
 @dp.message(F.photo)
 async def handle_photo(message: types.Message):
-    """
-    Обработчик присланной фотографии в чат
-    """
     status_msg = await message.reply(" Получил фото. Загружаю и запускаю поиск в Яндексе...")
     try:
-        # Берем фото наивысшего качества
         photo = message.photo[-1]
         buffer = io.BytesIO()
         await bot.download(photo.file_id, destination=buffer)
@@ -74,9 +70,6 @@ async def handle_photo(message: types.Message):
 
 @dp.message(F.document)
 async def handle_document(message: types.Message):
-    """
-    Обработчик присланных файлов (документов)
-    """
     doc = message.document
     mime = (doc.mime_type or "").lower()
     filename = (doc.file_name or "").lower()
@@ -97,9 +90,6 @@ async def handle_document(message: types.Message):
 
 @dp.message(F.text)
 async def handle_text(message: types.Message):
-    """
-    Обработчик текстовых сообщений со ссылками
-    """
     text = message.text.strip()
     urls = re.findall(URL_REGEX, text)
     
@@ -112,33 +102,28 @@ async def handle_text(message: types.Message):
     await process_image_url(message, status_msg, image_url)
 
 async def process_image_bytes(message: types.Message, status_msg: types.Message, image_bytes: bytes):
-    """
-    Процесс обработки байтового файла картинки
-    """
     try:
         await status_msg.edit_text(" Поиск публикаций изображения через Yandex Search API...")
-        found_urls = await yandex_client.search_by_image_bytes(image_bytes)
-        await evaluate_results_and_reply(status_msg, found_urls)
+        found_urls, error_msg = await yandex_client.search_by_image_bytes(image_bytes)
+        await evaluate_results_and_reply(status_msg, found_urls, error_msg)
     except Exception as e:
         logger.error(f" Ошибка в процессе проверки: {e}", exc_info=True)
-        await status_msg.edit_text(" Произошла ошибка при выполнении проверки.")
+        await status_msg.edit_text(f" Произошла ошибка при выполнении проверки: {e}")
 
 async def process_image_url(message: types.Message, status_msg: types.Message, image_url: str):
-    """
-    Процесс обработки URL ссылки на картинку
-    """
     try:
         await status_msg.edit_text(" Поиск публикаций изображения через Yandex Search API...")
-        found_urls = await yandex_client.search_by_image_url(image_url)
-        await evaluate_results_and_reply(status_msg, found_urls)
+        found_urls, error_msg = await yandex_client.search_by_image_url(image_url)
+        await evaluate_results_and_reply(status_msg, found_urls, error_msg)
     except Exception as e:
         logger.error(f" Ошибка в процессе проверки: {e}", exc_info=True)
-        await status_msg.edit_text(" Произошла ошибка при выполнении проверки.")
+        await status_msg.edit_text(f" Произошла ошибка при выполнении проверки: {e}")
 
-async def evaluate_results_and_reply(status_msg: types.Message, found_urls: list[str]):
-    """
-    Анализирует найденные урлы на фотобанки и отправляет вердикт
-    """
+async def evaluate_results_and_reply(status_msg: types.Message, found_urls: list[str], error_msg: str):
+    if error_msg:
+        await status_msg.edit_text(f"<b> Ошибка API:</b>\n{error_msg}")
+        return
+
     if not found_urls:
         warning_text = (
             "<b> ПРЕДУПРЕЖДЕНИЕ!</b>\n\n"
