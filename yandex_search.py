@@ -25,10 +25,10 @@ class YandexImageSearchClient:
         self.api_key = api_key or settings.yandex_api_key
         self.folder_id = folder_id or settings.yandex_folder_id
 
-    async def search_by_image_bytes(self, image_bytes: bytes, max_pages: int = 2) -> Tuple[List[str], str]:
+    async def search_by_image_bytes(self, image_bytes: bytes, max_pages: int = 5) -> Tuple[List[str], str]:
         """
         Ищет страницы в Интернете по бинарным данным картинки.
-        Запрашивает max_pages страниц ответа Yandex Search API для глубокого анализа.
+        Запрашивает max_pages (по умолчанию 5) страниц ответа Yandex Search API для максимально глубокого поиска.
         """
         if not self.api_key or not self.folder_id:
             return [], "YANDEX_API_KEY или YANDEX_FOLDER_ID не указаны в настройках."
@@ -53,9 +53,10 @@ class YandexImageSearchClient:
                     page_urls = self._extract_urls_from_sdk_result(search_result)
                     all_urls.update(page_urls)
                 except Exception as page_err:
-                    logger.warning(f"Ошибка при получении страницы {p}: {page_err}")
+                    logger.warning(f"Окончание страниц или ошибка на странице {p}: {page_err}")
                     if p == 0:
                         raise page_err
+                    break
 
             logger.info(f"Yandex SDK извлек всего {len(all_urls)} уникальных источников")
             return list(all_urls), ""
@@ -70,7 +71,7 @@ class YandexImageSearchClient:
             else:
                 return [], f" Ошибка Yandex Search API: {err_msg}"
 
-    async def search_by_image_url(self, image_url: str, max_pages: int = 2) -> Tuple[List[str], str]:
+    async def search_by_image_url(self, image_url: str, max_pages: int = 5) -> Tuple[List[str], str]:
         """
         Ищет страницы в Интернете по ссылке на картинку.
         """
