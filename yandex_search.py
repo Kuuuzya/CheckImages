@@ -1,5 +1,6 @@
 import base64
 import logging
+import re
 import xml.etree.ElementTree as ET
 import httpx
 from typing import List, Tuple
@@ -7,13 +8,13 @@ from config import settings
 
 logger = logging.getLogger(__name__)
 
-# Импортируем официальный Yandex AI Studio SDK
 try:
     from yandex_ai_studio_sdk import AIStudio
-    from yandex_ai_studio_sdk._exceptions import AioRpcError
     HAS_SDK = True
 except ImportError:
     HAS_SDK = False
+
+URL_REGEX = r'https?://[^\s\'"<>]+'
 
 class YandexImageSearchClient:
     """
@@ -36,7 +37,6 @@ class YandexImageSearchClient:
             return [], "Модуль yandex-ai-studio-sdk не установлен."
 
         try:
-            image_base64 = base64.b64encode(image_bytes).decode("utf-8")
             sdk = AIStudio(
                 folder_id=self.folder_id,
                 auth=self.api_key,
@@ -46,19 +46,11 @@ class YandexImageSearchClient:
                 family_mode="FAMILY_MODE_MODERATE",
             )
 
-            # В yandex-ai-studio-sdk run принимаются сырые байты изображения
+            # Выполняем поиск по сырым байтам изображения
             search_result = search.run(image_bytes, page=0)
 
-            if hasattr(search_result, "model_dump"):
-                result_data = search_result.model_dump()
-            elif hasattr(search_result, "to_dict"):
-                result_data = search_result.to_dict()
-            elif isinstance(search_result, dict):
-                result_data = search_result
-            else:
-                result_data = str(search_result)
-
-            urls = self._extract_urls_from_dict_or_obj(result_data)
+            urls = self._extract_urls_from_sdk_result(search_result)
+            logger.info(f"Yandex SDK извлек {len(urls)} уникальных источников")
             return urls, ""
 
         except Exception as e:
@@ -87,21 +79,34 @@ class YandexImageSearchClient:
             logger.error(f"Ошибка при скачивании ссылки: {e}")
             return [], f"Ошибка при загрузке картинки по ссылке: {e}"
 
-    def _extract_urls_from_dict_or_obj(self, data) -> List[str]:
+    def _extract_urls_from_sdk_result(self, search_result) -> List[str]:
+        """
+        Извлекает ссылки на страницы публикаций из объекта ByImageSearchResult SDK
+        """
         urls = set()
 
-        def _recursive_search(node):
-            if isinstance(node, dict):
-                for k, v in node.items():
-                    if k in ("url", "link", "pageUrl", "page_url", "site_url") and isinstance(v, str) and v.startswith("http"):
-                        urls.add(v)
-                    else:
-                        _recursive_search(v)
-            elif isinstance(node, list):
-                for item in node:
-                    _recursive_search(item)
-            elif isinstance(node, str) and node.startswith("http") and not node.endswith((".jpg", ".png", ".webp", ".jpeg")):
-                urls.add(node)
+        # 1. Прямая итерация по результатам SDK (ByImageSearchResult)
+        try:
+            for item in search_result:
+                # Извлекаем ссылки на страницы публикации
+                for attr in ("page_url", "url", "link", "site_url"):
+                    val = getattr(item, attr, None)
+                    if val and isinstance(val, str) and val.startswith("http"):
+                        # Игнорируем прямые ссылки на сами файлы картинок (.jpg, .png и т.д.)
+                        if not val.lower().endswith((".jpg", ".png", ".webp", ".jpeg", ".gif")):
+                            urls.add(val)
+        except Exception as e:
+            logger.warning(f"Итерация по SDK результату выявила предупреждение: {e}")
 
-        _recursive_search(data)
+        # 2. Рекурсивный поиск и регулярное выражение для гарантированного извлечения
+        if not urls:
+            try:
+                raw_str = str(search_result)
+                found = re.findall(URL_REGEX, raw_str)
+                for u in found:
+                    if not u.lower().endswith((".jpg", ".png", ".webp", ".jpeg", ".gif")):
+                        urls.add(u)
+            except Exception:
+                pass
+
         return list(urls)
