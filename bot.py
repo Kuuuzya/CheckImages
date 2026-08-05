@@ -41,7 +41,7 @@ async def cmd_start(message: types.Message):
         "1. Отправьте мне <b>ссылку на картинку</b> (HTTP/HTTPS).\n"
         "2. Или прикрепите <b>фотографию</b> прямо в чат.\n"
         "3. Или отправьте <b>файл изображения</b> как документ.\n\n"
-        "Я найду все места публикации через Google Search API (Google Lens) "
+        "Я найду все места публикации через Yandex & Google Search API "
         "и с помощью алгоритмов и ChatGPT определю, есть ли среди них запрещенные фотобанки."
     )
     await message.reply(welcome_text)
@@ -52,13 +52,13 @@ async def cmd_help(message: types.Message):
         "<b> Инструкция:</b>\n\n"
         "• Отправьте ссылку на картинку (например: <code>https://site.com/image.jpg</code>)\n"
         "• Или отправьте файл/фотографию прямо в чат.\n\n"
-        "Бот выполнит обратно-поисковый запрос через Google Lens API и выявит наличие коммерческих фотобанков (Shutterstock, Getty, Lori, Adobe Stock и др.)."
+        "Бот выполнит обратно-поисковый запрос через Яндекс & Google API и выявит наличие коммерческих фотобанков (Shutterstock, Getty, Lori, Adobe Stock, Dreamstime и др.)."
     )
     await message.reply(help_text)
 
 @dp.message(F.photo)
 async def handle_photo(message: types.Message):
-    status_msg = await message.reply(" Получил фото. Загружаю и запускаю поиск в Google Lens...")
+    status_msg = await message.reply(" Получил фото. Загружаю и запускаю глубокий поиск...")
     try:
         photo = message.photo[-1]
         buffer = io.BytesIO()
@@ -80,7 +80,7 @@ async def handle_document(message: types.Message):
     filename = (doc.file_name or "").lower()
 
     if mime.startswith("image/") or filename.endswith(IMAGE_EXTENSIONS):
-        status_msg = await message.reply(" Получил файл изображения. Загружаю и ищу в Google Lens...")
+        status_msg = await message.reply(" Получил файл изображения. Загружаю и запускаю поиск...")
         try:
             buffer = io.BytesIO()
             await bot.download(doc.file_id, destination=buffer)
@@ -106,7 +106,7 @@ async def handle_text(message: types.Message):
         return
 
     image_url = urls[0]
-    status_msg = await message.reply(" Принял ссылку. Ищу совпадения в Google Lens...")
+    status_msg = await message.reply(" Принял ссылку. Запускаю поиск по фотобанкам...")
     await process_image_input(message, status_msg, image_url=image_url)
 
 async def process_image_input(
@@ -116,20 +116,31 @@ async def process_image_input(
     image_url: str = None
 ):
     try:
-        await status_msg.edit_text(" Поиск точных совпадений через Google Lens API...")
+        await status_msg.edit_text(" Поиск публикаций и фотобанков через Yandex & Google API...")
         
         all_found_urls = set()
         err_messages = []
 
-        # Поиск выполняет ТОЛЬКО ДВИЖОК GOOGLE (Google Lens / Google Cloud Vision)
-        if settings.serpapi_key or settings.google_api_key:
+        # 1. Поиск через Yandex API (включая точечный поиск по доменам стоков)
+        if image_bytes:
+            y_urls, y_err = await yandex_client.search_by_image_bytes(image_bytes)
+        elif image_url:
+            y_urls, y_err = await yandex_client.search_by_image_url(image_url)
+        else:
+            y_urls, y_err = [], "Нет данных изображения"
+
+        if y_err:
+            err_messages.append(f"Yandex: {y_err}")
+        else:
+            all_found_urls.update(y_urls)
+
+        # 2. Дополнительный поиск через Google API (если в .env указан ключ SERPAPI_KEY или GOOGLE_API_KEY)
+        if image_url and (settings.serpapi_key or settings.google_api_key):
             g_urls, g_err = await google_client.search_by_image_url(image_url)
             if g_err:
                 err_messages.append(f"Google: {g_err}")
             else:
                 all_found_urls.update(g_urls)
-        else:
-            err_messages.append("Google API ключи (SERPAPI_KEY или GOOGLE_API_KEY) не указаны в файле .env")
 
         await evaluate_results_and_reply(
             status_msg,
@@ -150,19 +161,19 @@ async def evaluate_results_and_reply(
     image_url: str = None
 ):
     if error_msg:
-        await status_msg.edit_text(f"<b> Ошибка Google API:</b>\n{error_msg}")
+        await status_msg.edit_text(f"<b> Ошибка API:</b>\n{error_msg}")
         return
 
     if not found_urls:
         warning_text = (
             "<b> ПРЕДУПРЕЖДЕНИЕ!</b>\n\n"
             "Данное изображение <b>ранее нигде не было опубликовано</b> в Интернете "
-            "(Google Lens не нашел ни одной точной копии этой картинки)."
+            "(ни один поисковый движок не нашел копий этой картинки)."
         )
         await status_msg.edit_text(warning_text)
         return
 
-    await status_msg.edit_text(f" Найдено источников через Google: {len(found_urls)}. Проверяю на совпадения с фотобанками...")
+    await status_msg.edit_text(f" Найдено источников: {len(found_urls)}. Проверяю на совпадения с фотобанками...")
     photobanks_found = await verifier.verify_urls(
         found_urls,
         original_image_bytes=image_bytes,
@@ -185,7 +196,7 @@ async def evaluate_results_and_reply(
     else:
         clean_text = (
             "<b> Фотобанки не обнаружены.</b>\n\n"
-            f"Проверено {len(found_urls)} источников через Google. Совпадений с коммерческими фотобанками не найдено."
+            f"Проверено {len(found_urls)} источников. Совпадений с заблокированными коммерческими фотобанками и стоками не найдено."
         )
         await status_msg.edit_text(clean_text)
 
@@ -194,7 +205,7 @@ async def main():
         print(" ОШИБКА: TELEGRAM_BOT_TOKEN не задан!")
         return
 
-    print(" Бот (Google Lens) успешно запущен и готов к работе!")
+    print(" Бот успешно запущен и готов к работе!")
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
