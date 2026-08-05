@@ -20,6 +20,10 @@ try:
         openai_api_key: str = os.getenv("OPENAI_API_KEY", "")
         openai_model: str = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
 
+        # Google / SerpAPI keys
+        serpapi_key: str = os.getenv("SERPAPI_KEY", "")
+        google_api_key: str = os.getenv("GOOGLE_API_KEY", "")
+
         model_config = SettingsConfigDict(
             env_file=os.path.join(BASE_DIR, ".env"),
             env_file_encoding="utf-8",
@@ -49,5 +53,13 @@ except ImportError:
         @property
         def openai_model(self) -> str:
             return os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+
+        @property
+        def serpapi_key(self) -> str:
+            return os.getenv("SERPAPI_KEY", "")
+
+        @property
+        def google_api_key(self) -> str:
+            return os.getenv("GOOGLE_API_KEY", "")
 
     settings = SettingsFallback()

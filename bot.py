@@ -9,6 +9,7 @@ from aiogram.client.default import DefaultBotProperties
 
 from config import settings
 from yandex_search import YandexImageSearchClient
+from google_search import GoogleImageSearchClient
 from verifier import ImageVerifier
 
 # Настройка логирования
@@ -25,6 +26,7 @@ bot = Bot(
 
 dp = Dispatcher()
 yandex_client = YandexImageSearchClient()
+google_client = GoogleImageSearchClient()
 verifier = ImageVerifier()
 
 URL_REGEX = r'https?://[^\s<>"]+|www\.[^\s<>"]+'
@@ -39,7 +41,7 @@ async def cmd_start(message: types.Message):
         "1. Отправьте мне <b>ссылку на картинку</b> (HTTP/HTTPS).\n"
         "2. Или прикрепите <b>фотографию</b> прямо в чат.\n"
         "3. Или отправьте <b>файл изображения</b> как документ.\n\n"
-        "Я найду все места публикации изображения через Yandex Search API "
+        "Я найду все места публикации через Yandex & Google Search API "
         "и с помощью алгоритмов и ChatGPT определю, есть ли среди них запрещенные фотобанки."
     )
     await message.reply(welcome_text)
@@ -50,20 +52,24 @@ async def cmd_help(message: types.Message):
         "<b> Инструкция:</b>\n\n"
         "• Отправьте ссылку на картинку (например: <code>https://site.com/image.jpg</code>)\n"
         "• Или отправьте файл/фотографию прямо в чат.\n\n"
-        "Бот выполнит обратно-поисковый запрос через Яндекс API и выявит наличие коммерческих фотобанков (Shutterstock, Getty, Lori, Adobe Stock и др.)."
+        "Бот выполнит обратно-поисковый запрос через Яндекс & Google API и выявит наличие коммерческих фотобанков (Shutterstock, Getty, Lori, Adobe Stock и др.)."
     )
     await message.reply(help_text)
 
 @dp.message(F.photo)
 async def handle_photo(message: types.Message):
-    status_msg = await message.reply(" Получил фото. Загружаю и запускаю поиск в Яндексе...")
+    status_msg = await message.reply(" Получил фото. Загружаю и запускаю поиск в Яндекс и Google...")
     try:
         photo = message.photo[-1]
         buffer = io.BytesIO()
         await bot.download(photo.file_id, destination=buffer)
         image_bytes = buffer.getvalue()
 
-        await process_image_bytes(message, status_msg, image_bytes)
+        # Формируем временную ссылку через Telegram API для Google Lens
+        file_info = await bot.get_file(photo.file_id)
+        file_url = f"https://api.telegram.org/file/bot{settings.telegram_bot_token}/{file_info.file_path}"
+
+        await process_image_input(message, status_msg, image_bytes=image_bytes, image_url=file_url)
     except Exception as e:
         logger.error(f"Ошибка при обработке фото: {e}")
         await status_msg.edit_text(" Произошла ошибка при обработке фотографии.")
@@ -75,13 +81,16 @@ async def handle_document(message: types.Message):
     filename = (doc.file_name or "").lower()
 
     if mime.startswith("image/") or filename.endswith(IMAGE_EXTENSIONS):
-        status_msg = await message.reply(" Получил файл изображения. Загружаю и ищу в Яндексе...")
+        status_msg = await message.reply(" Получил файл изображения. Загружаю и ищу в Яндекс и Google...")
         try:
             buffer = io.BytesIO()
             await bot.download(doc.file_id, destination=buffer)
             image_bytes = buffer.getvalue()
 
-            await process_image_bytes(message, status_msg, image_bytes)
+            file_info = await bot.get_file(doc.file_id)
+            file_url = f"https://api.telegram.org/file/bot{settings.telegram_bot_token}/{file_info.file_path}"
+
+            await process_image_input(message, status_msg, image_bytes=image_bytes, image_url=file_url)
         except Exception as e:
             logger.error(f"Ошибка при обработке документа-картинки: {e}")
             await status_msg.edit_text(" Произошла ошибка при обработке файла.")
@@ -98,23 +107,49 @@ async def handle_text(message: types.Message):
         return
 
     image_url = urls[0]
-    status_msg = await message.reply(" Принял ссылку. Ищу совпадения в Яндексе...")
-    await process_image_url(message, status_msg, image_url)
+    status_msg = await message.reply(" Принял ссылку. Ищу совпадения в Яндекс и Google...")
+    await process_image_input(message, status_msg, image_url=image_url)
 
-async def process_image_bytes(message: types.Message, status_msg: types.Message, image_bytes: bytes):
+async def process_image_input(
+    message: types.Message,
+    status_msg: types.Message,
+    image_bytes: bytes = None,
+    image_url: str = None
+):
     try:
-        await status_msg.edit_text(" Поиск точных совпадений через Yandex Search API...")
-        found_urls, error_msg = await yandex_client.search_by_image_bytes(image_bytes)
-        await evaluate_results_and_reply(status_msg, found_urls, error_msg, image_bytes=image_bytes)
-    except Exception as e:
-        logger.error(f" Ошибка в процессе проверки: {e}", exc_info=True)
-        await status_msg.edit_text(f" Произошла ошибка при выполнении проверки: {e}")
+        await status_msg.edit_text(" Поиск точных совпадений через Yandex & Google API...")
+        
+        all_found_urls = set()
+        err_messages = []
 
-async def process_image_url(message: types.Message, status_msg: types.Message, image_url: str):
-    try:
-        await status_msg.edit_text(" Поиск точных совпадений через Yandex Search API...")
-        found_urls, error_msg = await yandex_client.search_by_image_url(image_url)
-        await evaluate_results_and_reply(status_msg, found_urls, error_msg, image_url=image_url)
+        # 1. Поиск через Yandex API
+        if image_bytes:
+            y_urls, y_err = await yandex_client.search_by_image_bytes(image_bytes)
+        elif image_url:
+            y_urls, y_err = await yandex_client.search_by_image_url(image_url)
+        else:
+            y_urls, y_err = [], "Нет данных изображения"
+
+        if y_err:
+            err_messages.append(f"Yandex: {y_err}")
+        else:
+            all_found_urls.update(y_urls)
+
+        # 2. Поиск через Google API (если настроен SERPAPI_KEY или GOOGLE_API_KEY)
+        if image_url and (settings.serpapi_key or settings.google_api_key):
+            g_urls, g_err = await google_client.search_by_image_url(image_url)
+            if g_err:
+                err_messages.append(f"Google: {g_err}")
+            else:
+                all_found_urls.update(g_urls)
+
+        await evaluate_results_and_reply(
+            status_msg,
+            list(all_found_urls),
+            "\n".join(err_messages) if not all_found_urls and err_messages else "",
+            image_bytes=image_bytes,
+            image_url=image_url
+        )
     except Exception as e:
         logger.error(f" Ошибка в процессе проверки: {e}", exc_info=True)
         await status_msg.edit_text(f" Произошла ошибка при выполнении проверки: {e}")
@@ -134,7 +169,7 @@ async def evaluate_results_and_reply(
         warning_text = (
             "<b> ПРЕДУПРЕЖДЕНИЕ!</b>\n\n"
             "Данное изображение <b>ранее нигде не было опубликовано</b> в Интернете "
-            "(Яндекс не нашел ни одной точной копии этой картинки)."
+            "(Яндекс и Google не нашли ни одной точной копии этой картинки)."
         )
         await status_msg.edit_text(warning_text)
         return
