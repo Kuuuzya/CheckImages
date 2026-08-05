@@ -2,7 +2,7 @@ import re
 from urllib.parse import urlparse
 from typing import Optional, Dict, Set
 
-# База данных фотобанков, стоков и микростоков (международных и российских)
+# Официальный список ТОЛЬКО коммерческих фотобанков, стоков и микростоков
 PHOTOBANK_DOMAINS: Dict[str, str] = {
     # Крупнейшие международные фотобанки
     "shutterstock.com": "Shutterstock",
@@ -11,7 +11,6 @@ PHOTOBANK_DOMAINS: Dict[str, str] = {
     "gettyimages.co.uk": "Getty Images UK",
     "gettyimages.de": "Getty Images DE",
     "stock.adobe.com": "Adobe Stock",
-    "adobe.com": "Adobe Stock",
     "istockphoto.com": "iStock by Getty Images",
     "depositphotos.com": "Depositphotos",
     "dreamstime.com": "Dreamstime",
@@ -61,7 +60,7 @@ PHOTOBANK_DOMAINS: Dict[str, str] = {
     "ingimage.com": "Ingimage",
     "graphicriver.net": "GraphicRiver",
 
-    # Российские и СНГ фотобанки и фотоагентства
+    # Российские и СНГ коммерческие фотобанки и фотоагентства
     "lori.ru": "Фотобанк Лори (Lori.ru)",
     "photogenica.ru": "Фотодженика (Photogenica)",
     "rosfoto.ru": "Росфото (Rosfoto)",
@@ -70,17 +69,13 @@ PHOTOBANK_DOMAINS: Dict[str, str] = {
     "sputnikimages.com": "Sputnik Images",
     "visualrian.ru": "РИА Новости Медиабанк (Visual RIAN)",
     "tassphoto.com": "Фотохроника ТАСС (TASS Photo)",
-    "kommersant.ru": "Издательский дом Коммерсантъ (Фотоархив)",
-    "microstock.ru": "Микросток.ру",
     "foto-bank.ru": "Фотобанк.ру",
     "geo-photo.ru": "Geo-Photo",
     "eastnews.ru": "East News",
     "globallookpress.com": "Global Look Press",
-    "mirtesen.ru": "МирТесен Фото",
-    "foto.mail.ru": "Mail.ru Фото",
 }
 
-# Регулярные выражения для поиска ключевых слов фотобанков в URL (дополнительный анализ)
+# Ключевые слова доменов фотобанков
 PHOTOBANK_KEYWORDS = [
     r'shutterstock', r'gettyimages', r'istock', r'depositphotos',
     r'dreamstime', r'alamy', r'123rf', r'freepik', r'adobe\.stock',
@@ -91,7 +86,7 @@ PHOTOBANK_KEYWORDS = [
 
 def extract_domain(url: str) -> str:
     """
-    Извлекает чистое доменное имя из URL без www и поддоменов первого уровня.
+    Извлекает чистое доменное имя из URL.
     """
     try:
         parsed = urlparse(url)
@@ -99,7 +94,6 @@ def extract_domain(url: str) -> str:
         if ":" in netloc:
             netloc = netloc.split(":")[0]
         
-        # Удаляем prefix www.
         if netloc.startswith("www."):
             netloc = netloc[4:]
             
@@ -109,22 +103,20 @@ def extract_domain(url: str) -> str:
 
 def check_photobank_domain(url: str) -> Optional[str]:
     """
-    Проверяет, принадлежит ли URL известному фотобанку.
-    Возвращает название фотобанка или None.
+    Проверяет, принадлежит ли URL строго известному коммерческому фотобанку.
     """
     domain = extract_domain(url)
     if not domain:
         return None
 
-    # Точное или поддоменное совпадение
+    # Точное совпадение с доменной базой фотобанков
     for pb_domain, pb_name in PHOTOBANK_DOMAINS.items():
         if domain == pb_domain or domain.endswith("." + pb_domain):
             return pb_name
             
-    # Проверка по ключевым словам в домене/URL
+    # Проверка по ключам только стоковых паттернов
     for pattern in PHOTOBANK_KEYWORDS:
         if re.search(pattern, url, re.IGNORECASE):
-            # Находим имя по совпадению
             return f"Стоковый ресурс ({domain})"
 
     return None
@@ -132,7 +124,7 @@ def check_photobank_domain(url: str) -> Optional[str]:
 def find_photobanks_in_urls(urls: list[str]) -> dict[str, str]:
     """
     Принимает список URL-адресов.
-    Возвращает словарь {url: photobank_name} для всех найденных фотобанков.
+    Возвращает словарь {url: photobank_name} ТОЛЬКО для реальных фотобанков.
     """
     found = {}
     for url in urls:
