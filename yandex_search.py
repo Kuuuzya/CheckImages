@@ -25,10 +25,10 @@ class YandexImageSearchClient:
         self.api_key = api_key or settings.yandex_api_key
         self.folder_id = folder_id or settings.yandex_folder_id
 
-    async def search_by_image_bytes(self, image_bytes: bytes) -> Tuple[List[str], str]:
+    async def search_by_image_bytes(self, image_bytes: bytes, max_pages: int = 2) -> Tuple[List[str], str]:
         """
         Ищет страницы в Интернете по бинарным данным картинки.
-        Возвращает кортеж: (список_найденных_URL, сообщение_об_ошибке_если_есть)
+        Запрашивает max_pages страниц ответа Yandex Search API для глубокого анализа.
         """
         if not self.api_key or not self.folder_id:
             return [], "YANDEX_API_KEY или YANDEX_FOLDER_ID не указаны в настройках."
@@ -46,12 +46,19 @@ class YandexImageSearchClient:
                 family_mode="FAMILY_MODE_MODERATE",
             )
 
-            # Выполняем поиск по сырым байтам изображения
-            search_result = search.run(image_bytes, page=0)
+            all_urls = set()
+            for p in range(max_pages):
+                try:
+                    search_result = search.run(image_bytes, page=p)
+                    page_urls = self._extract_urls_from_sdk_result(search_result)
+                    all_urls.update(page_urls)
+                except Exception as page_err:
+                    logger.warning(f"Ошибка при получении страницы {p}: {page_err}")
+                    if p == 0:
+                        raise page_err
 
-            urls = self._extract_urls_from_sdk_result(search_result)
-            logger.info(f"Yandex SDK извлек {len(urls)} уникальных источников")
-            return urls, ""
+            logger.info(f"Yandex SDK извлек всего {len(all_urls)} уникальных источников")
+            return list(all_urls), ""
 
         except Exception as e:
             err_msg = str(e)
@@ -63,7 +70,7 @@ class YandexImageSearchClient:
             else:
                 return [], f" Ошибка Yandex Search API: {err_msg}"
 
-    async def search_by_image_url(self, image_url: str) -> Tuple[List[str], str]:
+    async def search_by_image_url(self, image_url: str, max_pages: int = 2) -> Tuple[List[str], str]:
         """
         Ищет страницы в Интернете по ссылке на картинку.
         """
@@ -74,31 +81,24 @@ class YandexImageSearchClient:
                     return [], f"Не удалось скачать картинку по ссылке (HTTP статус {resp.status_code})."
                 image_bytes = resp.content
 
-            return await self.search_by_image_bytes(image_bytes)
+            return await self.search_by_image_bytes(image_bytes, max_pages=max_pages)
         except Exception as e:
             logger.error(f"Ошибка при скачивании ссылки: {e}")
             return [], f"Ошибка при загрузке картинки по ссылке: {e}"
 
     def _extract_urls_from_sdk_result(self, search_result) -> List[str]:
-        """
-        Извлекает ссылки на страницы публикаций из объекта ByImageSearchResult SDK
-        """
         urls = set()
 
-        # 1. Прямая итерация по результатам SDK (ByImageSearchResult)
         try:
             for item in search_result:
-                # Извлекаем ссылки на страницы публикации
                 for attr in ("page_url", "url", "link", "site_url"):
                     val = getattr(item, attr, None)
                     if val and isinstance(val, str) and val.startswith("http"):
-                        # Игнорируем прямые ссылки на сами файлы картинок (.jpg, .png и т.д.)
                         if not val.lower().endswith((".jpg", ".png", ".webp", ".jpeg", ".gif")):
                             urls.add(val)
         except Exception as e:
-            logger.warning(f"Итерация по SDK результату выявила предупреждение: {e}")
+            logger.warning(f"Предупреждение итерации SDK: {e}")
 
-        # 2. Рекурсивный поиск и регулярное выражение для гарантированного извлечения
         if not urls:
             try:
                 raw_str = str(search_result)
