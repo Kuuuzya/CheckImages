@@ -26,13 +26,31 @@ class YandexImageSearchClient:
         self.cloud_endpoint = "https://yandex.cloud/search/v2/image"
         self.xml_endpoint = "https://yandex.ru/search/xml"
 
-    async def search_by_image_url(self, image_url: str) -> List[str]:
+    async def search_by_image_bytes(self, image_bytes: bytes) -> List[str]:
         """
-        Ищет страницы в Интернете, где опубликовано изображение по заданной ссылке.
-        Возвращает список найденных URL-адресов.
+        Ищет страницы в Интернете по бинарным данным картинки (байт-массиву).
         """
         if not self.api_key or not self.folder_id:
-            logger.warning("YANDEX_API_KEY или YANDEX_FOLDER_ID не укомплектованы!")
+            logger.warning("YANDEX_API_KEY или YANDEX_FOLDER_ID не настроены!")
+            return []
+
+        urls = set()
+
+        if HAS_SDK:
+            try:
+                sdk_urls = await self._search_bytes_via_sdk(image_bytes)
+                urls.update(sdk_urls)
+            except Exception as e:
+                logger.error(f"Ошибка при поиске по байтам картинки через SDK: {e}")
+
+        return list(urls)
+
+    async def search_by_image_url(self, image_url: str) -> List[str]:
+        """
+        Ищет страницы в Интернете по ссылке на картинку.
+        """
+        if not self.api_key or not self.folder_id:
+            logger.warning("YANDEX_API_KEY или YANDEX_FOLDER_ID не настроены!")
             return []
 
         urls = set()
@@ -63,18 +81,10 @@ class YandexImageSearchClient:
 
         return list(urls)
 
-    async def _search_via_sdk(self, image_url: str) -> List[str]:
+    async def _search_bytes_via_sdk(self, image_bytes: bytes) -> List[str]:
         """
-        Запрос к Яндекс Поиску по картинке через yandex-ai-studio-sdk
+        Отправляет бинарные данные картинки в base64 через yandex-ai-studio-sdk
         """
-        # Скачиваем картинку по ссылке для кодирования в base64
-        async with httpx.AsyncClient(timeout=15.0, follow_redirects=True) as client:
-            resp = await client.get(image_url)
-            if resp.status_code != 200:
-                logger.warning(f"Не удалось скачать картинку {image_url}: статус {resp.status_code}")
-                return []
-            image_bytes = resp.content
-
         image_base64 = base64.b64encode(image_bytes).decode("utf-8")
 
         sdk = AIStudio(
@@ -98,6 +108,19 @@ class YandexImageSearchClient:
             result_data = str(search_result)
 
         return self._extract_urls_from_dict_or_obj(result_data)
+
+    async def _search_via_sdk(self, image_url: str) -> List[str]:
+        """
+        Запрос к Яндекс Поиску по картинке через yandex-ai-studio-sdk по URL ссылки
+        """
+        async with httpx.AsyncClient(timeout=15.0, follow_redirects=True) as client:
+            resp = await client.get(image_url)
+            if resp.status_code != 200:
+                logger.warning(f"Не удалось скачать картинку {image_url}: статус {resp.status_code}")
+                return []
+            image_bytes = resp.content
+
+        return await self._search_bytes_via_sdk(image_bytes)
 
     async def _search_cloud_api(self, image_url: str) -> List[str]:
         """
@@ -147,9 +170,6 @@ class YandexImageSearchClient:
                 return []
 
     def _extract_urls_from_dict_or_obj(self, data) -> List[str]:
-        """
-        Рекурсивный поиск всех HTTP/HTTPS URL из ответа Яндекс Движка.
-        """
         urls = set()
 
         def _recursive_search(node):
@@ -163,7 +183,6 @@ class YandexImageSearchClient:
                 for item in node:
                     _recursive_search(item)
             elif isinstance(node, str) and node.startswith("http") and not node.endswith((".jpg", ".png", ".webp", ".jpeg")):
-                # Ссылка на страницу публикации
                 urls.add(node)
 
         _recursive_search(data)

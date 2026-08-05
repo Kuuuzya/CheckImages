@@ -14,11 +14,11 @@ try:
     from pydantic_settings import BaseSettings, SettingsConfigDict
 
     class Settings(BaseSettings):
-        telegram_bot_token: str = os.getenv("TELEGRAM_BOT_TOKEN", "")
-        yandex_api_key: str = os.getenv("YANDEX_API_KEY", "")
-        yandex_folder_id: str = os.getenv("YANDEX_FOLDER_ID", "")
-        openai_api_key: str = os.getenv("OPENAI_API_KEY", "")
-        openai_model: str = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+        telegram_bot_token: str = ""
+        yandex_api_key: str = ""
+        yandex_folder_id: str = ""
+        openai_api_key: str = ""
+        openai_model: str = "gpt-4o-mini"
 
         model_config = SettingsConfigDict(
             env_file=os.path.join(BASE_DIR, ".env"),
